@@ -1,0 +1,38 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "STM32 Debug (OpenOCD)",
+            "type": "cortex-debug",
+            "request": "launch",
+            "servertype": "openocd",
+            "configFiles": [
+                "interface/stlink.cfg",
+                "target/stm32f4x.cfg"
+            ],
+            "executable": "${workspaceFolder}/build/FlightComputer.elf",
+            "runToEntryPoint": "main",
+            "svdFile": "${workspaceFolder}/STM32F407.svd",
+            "preLaunchTask": "2. Derle (Build)",
+            "showDevDebugOutput": "none",
+            "liveWatch": {
+                "enabled": true,
+                "samplesPerSecond": 4
+            }
+        },
+        {
+            "name": "STM32 Flash + Debug",
+            "type": "cortex-debug",
+            "request": "launch",
+            "servertype": "openocd",
+            "configFiles": [
+                "interface/stlink.cfg",
+                "target/stm32f4x.cfg"
+            ],
+            "executable": "${workspaceFolder}/build/FlightComputer.elf",
+            "runToEntryPoint": "main",
+            "preLaunchTask": "3b. Karta Yükle (OpenOCD)",
+            "showDevDebugOutput": "none"
+        }
+    ]
+}

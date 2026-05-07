@@ -1,0 +1,46 @@
+{
+    "folders": [
+        {
+            "name": "Workspace (STM32 Build)",
+            "path": "."
+        },
+        {
+            "name": "Core (Kaynak Kodlar)",
+            "path": "../Core"
+        },
+        {
+            "name": "Drivers (HAL + CMSIS)",
+            "path": "../Drivers"
+        },
+        {
+            "name": "Middlewares (FreeRTOS)",
+            "path": "../Middlewares"
+        },
+        {
+            "name": "Simulasyon",
+            "path": "../Simulation"
+        },
+        {
+            "name": "Belgeler",
+            "path": "../docs"
+        }
+    ],
+    "settings": {
+        "cmake.configureOnOpen": false,
+        "cmake.buildDirectory": "${workspaceFolder:Workspace (STM32 Build)}/build",
+        "cmake.toolchainFile": "${workspaceFolder:Workspace (STM32 Build)}/cmake/stm32f407.cmake",
+        "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
+        "editor.rulers": [100],
+        "files.trimTrailingWhitespace": true,
+        "editor.formatOnSave": true
+    },
+    "extensions": {
+        "recommendations": [
+            "ms-vscode.cpptools",
+            "ms-vscode.cmake-tools",
+            "marus25.cortex-debug",
+            "stmicroelectronics.stm32-vscode-extension",
+            "twxs.cmake"
+        ]
+    }
+}
