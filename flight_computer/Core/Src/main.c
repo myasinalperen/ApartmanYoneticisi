@@ -36,26 +36,27 @@ static GPSData          g_gps;
 static RCInput          g_rc;
 static FlightController g_fc;
 
-/* SBUS DMA tamponu */
-static uint8_t sbus_dma_buf[SBUS_FRAME_LEN * 2];
+/* iBUS DMA tamponu (32 byte × 2 = çift tampon) */
+static uint8_t ibus_dma_buf[IBUS_FRAME_LEN * 2];
 
 /* ── RC görevi – SBUS DMA tamamlanınca çağrılır ────────── */
 static void task_rc(void *arg)
 {
     (void)arg;
     for (;;) {
-        /* DMA transfer tamamlanana kadar bekle (bildirim ile uyanır) */
+        /* DMA transfer tamamlanana kadar bekle */
         ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(20));
 
-        /* SBUS çerçevesini bul ve işle */
-        for (int i = 0; i <= SBUS_FRAME_LEN; i++) {
-            if (sbus_dma_buf[i] == SBUS_START_BYTE) {
-                rc_input_parse(&g_rc, &sbus_dma_buf[i]);
+        /* iBUS çerçevesini bul (header: 0x20 0x40) ve işle */
+        for (int i = 0; i <= IBUS_FRAME_LEN; i++) {
+            if (ibus_dma_buf[i]     == IBUS_HEADER0 &&
+                ibus_dma_buf[i + 1] == IBUS_HEADER1) {
+                rc_input_parse(&g_rc, &ibus_dma_buf[i]);
                 break;
             }
         }
         /* DMA'yı yeniden başlat */
-        HAL_UART_Receive_DMA(&huart1, sbus_dma_buf, SBUS_FRAME_LEN);
+        HAL_UART_Receive_DMA(&huart1, ibus_dma_buf, IBUS_FRAME_LEN);
     }
 }
 
@@ -136,8 +137,8 @@ int main(void)
     rc_input_init(&g_rc);
     fc_init(&g_fc);
 
-    /* SBUS DMA başlat */
-    HAL_UART_Receive_DMA(&huart1, sbus_dma_buf, SBUS_FRAME_LEN);
+    /* iBUS DMA başlat */
+    HAL_UART_Receive_DMA(&huart1, ibus_dma_buf, IBUS_FRAME_LEN);
 
     xTaskCreate(task_rc,        "RC",   256, NULL, TASK_PRIO_RC,        &rc_task_handle);
     xTaskCreate(task_imu,       "IMU",  512, NULL, TASK_PRIO_IMU,       NULL);
@@ -208,18 +209,16 @@ static void mx_i2c1_init(void)
     HAL_I2C_Init(&hi2c1);
 }
 
-/* USART1 – SBUS: 100000 baud, 8E2
- * PA10 = RX (inverter üzerinden RC alıcıya)
- * NOT: STM32F4 donanımsal UART inversiyonu desteklemez.
- *      Dış inverter gereklidir (bkz. wiring.txt)        */
+/* USART1 – FlySky iBUS: 115200 baud, 8N1, NORMAL lojik
+ * PA10 = RX → Alıcı iBUS pinine DOĞRUDAN bağla, inverter gereksiz */
 static void mx_usart1_sbus_init(void)
 {
     __HAL_RCC_USART1_CLK_ENABLE();
     huart1.Instance          = USART1;
-    huart1.Init.BaudRate     = SBUS_BAUDRATE;
-    huart1.Init.WordLength   = UART_WORDLENGTH_9B;  /* 8 bit data + parity = 9 */
-    huart1.Init.StopBits     = UART_STOPBITS_2;
-    huart1.Init.Parity       = UART_PARITY_EVEN;
+    huart1.Init.BaudRate     = IBUS_BAUDRATE;
+    huart1.Init.WordLength   = UART_WORDLENGTH_8B;
+    huart1.Init.StopBits     = UART_STOPBITS_1;
+    huart1.Init.Parity       = UART_PARITY_NONE;
     huart1.Init.Mode         = UART_MODE_RX;
     huart1.Init.HwFlowCtl    = UART_HWCONTROL_NONE;
     huart1.Init.OverSampling = UART_OVERSAMPLING_16;

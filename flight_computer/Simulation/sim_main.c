@@ -97,21 +97,30 @@ int main(void)
     rc_input_init(&rc);
     fc_init(&fc);
 
-    /* Simülasyonda RC'yi elle dolduralım: STABILIZE mod, arm ON, %40 gaz */
-    uint8_t fake_sbus[SBUS_FRAME_LEN] = {0};
-    fake_sbus[0]  = SBUS_START_BYTE;
-    fake_sbus[24] = SBUS_END_BYTE;
-    /* Tüm kanalları orta değere (992) ayarla */
-    int mid = 992;
-    fake_sbus[1]  = mid & 0xFF;
-    fake_sbus[2]  = (mid >> 8) | ((mid & 0xFF) << 3);
-    /* CH5 (mod) = 1811 → STABILIZE, CH6 (arm) = 1811 → ARM */
-    fake_sbus[7]  = 0xFF; fake_sbus[8] = 0x07;  /* CH5 high */
-    fake_sbus[9]  = 0xFF; fake_sbus[10]= 0x07;  /* CH6 high */
-    rc_input_parse(&rc, fake_sbus);
-    /* Throttle kanalını %40'a ayarla */
-    int thr_raw = SBUS_RAW_MIN + (int)(0.4f * (SBUS_RAW_MAX - SBUS_RAW_MIN));
-    (void)thr_raw; /* Gerçek simülasyonda JSBSim'den gelir */
+    /* Simülasyonda sahte iBUS çerçevesi: STABILIZE, arm ON, %40 gaz */
+    uint8_t fake_ibus[IBUS_FRAME_LEN] = {0};
+    fake_ibus[0] = IBUS_HEADER0;   /* 0x20 */
+    fake_ibus[1] = IBUS_HEADER1;   /* 0x40 */
+    /* CH1-CH4 (aileron/elevator/throttle/rudder) = 1500 µs (orta) */
+    for (int i = 0; i < 4; i++) {
+        fake_ibus[2 + i*2] = 0xDC; fake_ibus[3 + i*2] = 0x05; /* 1500 */
+    }
+    /* CH3 (throttle) = 1200 µs (%20 gaz) */
+    fake_ibus[2 + 2*2] = 0xB0; fake_ibus[3 + 2*2] = 0x04;
+    /* CH5 (mod) = 2000 µs → STABILIZE */
+    fake_ibus[2 + 4*2] = 0xD0; fake_ibus[3 + 4*2] = 0x07;
+    /* CH6 (arm) = 2000 µs → ARM */
+    fake_ibus[2 + 5*2] = 0xD0; fake_ibus[3 + 5*2] = 0x07;
+    /* Kalan kanallar 1500 µs */
+    for (int i = 6; i < IBUS_MAX_CHANNELS; i++) {
+        fake_ibus[2 + i*2] = 0xDC; fake_ibus[3 + i*2] = 0x05;
+    }
+    /* Checksum hesapla */
+    uint16_t cs = 0;
+    for (int i = 0; i < 30; i++) cs += fake_ibus[i];
+    cs = 0xFFFF - cs;
+    fake_ibus[30] = cs & 0xFF; fake_ibus[31] = (cs >> 8) & 0xFF;
+    rc_input_parse(&rc, fake_ibus);
 
     printf("[SIM] Kontrol döngüsü başladı (%.0f Hz)\n", (float)CTRL_LOOP_RATE_HZ);
     printf("Durdurmak için Ctrl+C\n\n");

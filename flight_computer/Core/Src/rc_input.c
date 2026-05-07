@@ -5,39 +5,42 @@
 void rc_input_init(RCInput *rc)
 {
     memset(rc, 0, sizeof(RCInput));
-    /* Ortayı göster – güvenli başlangıç */
-    for (int i = 0; i < RC_CHANNELS; i++)
-        rc->raw[i] = (SBUS_RAW_MIN + SBUS_RAW_MAX) / 2;
-    rc->failsafe = true;   /* bağlantı kurulana kadar failsafe'de kal */
+    for (int i = 0; i < IBUS_MAX_CHANNELS; i++)
+        rc->ch[i] = IBUS_CH_MID;
+    rc->ch[RC_CH_THROTTLE] = IBUS_CH_MIN;  /* throttle sıfırdan başlasın */
+    rc->valid = false;
 }
 
 bool rc_input_parse(RCInput *rc, const uint8_t *f)
 {
-    if (f[0] != SBUS_START_BYTE || f[24] != SBUS_END_BYTE)
+    /* Header kontrolü */
+    if (f[0] != IBUS_HEADER0 || f[1] != IBUS_HEADER1)
         return false;
 
-    /* 16 kanal, her biri 11 bit, bitfield paketleme */
-    rc->raw[0]  = ((f[1]       | f[2]  << 8)                    & 0x7FF);
-    rc->raw[1]  = ((f[2]  >> 3 | f[3]  << 5)                    & 0x7FF);
-    rc->raw[2]  = ((f[3]  >> 6 | f[4]  << 2 | f[5]  << 10)     & 0x7FF);
-    rc->raw[3]  = ((f[5]  >> 1 | f[6]  << 7)                    & 0x7FF);
-    rc->raw[4]  = ((f[6]  >> 4 | f[7]  << 4)                    & 0x7FF);
-    rc->raw[5]  = ((f[7]  >> 7 | f[8]  << 1 | f[9]  << 9)      & 0x7FF);
-    rc->raw[6]  = ((f[9]  >> 2 | f[10] << 6)                    & 0x7FF);
-    rc->raw[7]  = ((f[10] >> 5 | f[11] << 3)                    & 0x7FF);
+    /* Checksum: 0xFFFF − (byte[0..29] toplamı) */
+    uint16_t sum = 0;
+    for (int i = 0; i < 30; i++) sum += f[i];
+    uint16_t cs_recv = (uint16_t)(f[30] | (f[31] << 8));
+    if ((uint16_t)(0xFFFF - sum) != cs_recv)
+        return false;
 
-    rc->frame_lost    = (f[23] & SBUS_FRAMELOST_FLAG) != 0;
-    rc->failsafe      = (f[23] & SBUS_FAILSAFE_FLAG)  != 0;
+    /* 14 kanal, her biri 2 byte LE */
+    for (int i = 0; i < IBUS_MAX_CHANNELS; i++) {
+        uint16_t v = (uint16_t)(f[2 + i * 2] | (f[3 + i * 2] << 8));
+        /* Geçerli aralık: 900–2100 µs */
+        if (v < 900 || v > 2100) return false;
+        rc->ch[i] = v;
+    }
+
+    rc->valid         = true;
     rc->last_frame_ms = hw_get_tick_ms();
     return true;
 }
 
 float rc_get_norm(const RCInput *rc, uint8_t ch)
 {
-    if (ch >= RC_CHANNELS) return 0.0f;
-    float v = (float)(rc->raw[ch] - SBUS_RAW_MIN)
-            / (float)(SBUS_RAW_MAX - SBUS_RAW_MIN);   /* 0.0 … 1.0 */
-    v = v * 2.0f - 1.0f;                              /* -1.0 … +1.0 */
+    if (ch >= IBUS_MAX_CHANNELS) return 0.0f;
+    float v = ((float)rc->ch[ch] - IBUS_CH_MID) / 500.0f;  /* -1.0 … +1.0 */
     if (v >  1.0f) v =  1.0f;
     if (v < -1.0f) v = -1.0f;
     return v;
@@ -45,8 +48,8 @@ float rc_get_norm(const RCInput *rc, uint8_t ch)
 
 float rc_get_throttle(const RCInput *rc)
 {
-    float v = (float)(rc->raw[RC_CH_THROTTLE] - SBUS_RAW_MIN)
-            / (float)(SBUS_RAW_MAX - SBUS_RAW_MIN);
+    float v = ((float)rc->ch[RC_CH_THROTTLE] - IBUS_CH_MIN)
+            / (float)(IBUS_CH_MAX - IBUS_CH_MIN);
     if (v > 1.0f) v = 1.0f;
     if (v < 0.0f) v = 0.0f;
     return v;
@@ -54,5 +57,5 @@ float rc_get_throttle(const RCInput *rc)
 
 bool rc_is_lost(const RCInput *rc)
 {
-    return (hw_get_tick_ms() - rc->last_frame_ms) > 500u;
+    return !rc->valid || (hw_get_tick_ms() - rc->last_frame_ms) > 500u;
 }

@@ -108,7 +108,7 @@ void fc_update(FlightController *fc, const IMU *imu, const RCInput *rc, float dt
     if (!fc->armed) return;
 
     /* RC kaybı → failsafe */
-    if (rc_is_lost(rc) || rc->failsafe) {
+    if (rc_is_lost(rc)) {
         apply_failsafe(fc);
         /* Failsafe'de de PID çalışsın – mod STABILIZE'a çekildi */
     } else {
@@ -139,7 +139,7 @@ void fc_update(FlightController *fc, const IMU *imu, const RCInput *rc, float dt
     case MODE_STABILIZE: {
         float target_roll, target_pitch, target_yaw_rate;
 
-        if (rc_is_lost(rc) || rc->failsafe) {
+        if (rc_is_lost(rc)) {
             target_roll      = 0.0f;
             target_pitch     = FAILSAFE_PITCH_DEG;
             target_yaw_rate  = 0.0f;

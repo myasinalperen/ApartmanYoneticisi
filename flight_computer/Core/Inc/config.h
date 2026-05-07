@@ -59,16 +59,11 @@
 /* ── Madgwick filtresi ───────────────────────────────────── */
 #define MADGWICK_BETA           0.1f
 
-/* ── RC Alıcı (SBUS) ─────────────────────────────────────── */
-#define RC_CHANNELS             8
-#define SBUS_BAUDRATE           100000u    /* 100 kbaud, 8E2, inverted */
-#define SBUS_FRAME_LEN          25u
-#define SBUS_START_BYTE         0x0F
-#define SBUS_END_BYTE           0x00
-#define SBUS_RAW_MIN            172
-#define SBUS_RAW_MAX            1811
-#define SBUS_FAILSAFE_FLAG      (1 << 3)
-#define SBUS_FRAMELOST_FLAG     (1 << 2)
+/* ── RC Alıcı (FlySky iBUS) ──────────────────────────────── */
+/* iBUS: 115200 baud, 8N1, NORMAL lojik – inverter GEREKMİYOR */
+/* Alıcı iBUS pini → STM32 PA10 (USART1_RX)  doğrudan bağla  */
+#define RC_CHANNELS             14
+#define IBUS_BAUDRATE           115200u
 
 /* RC kanal atamaları (Mode 2 kumanda) */
 #define RC_CH_AILERON           0    /* sağ stick yatay */

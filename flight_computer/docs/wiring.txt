@@ -58,33 +58,20 @@
   gövdenin üst kısmına yerleştir. Metalden uzak tut.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- 4. RC ALICI – SBUS  (UART1, 100000 baud, 8E2, inverted)
+ 4. RC ALICI – FlySky iBUS  (UART1, 115200 baud, 8N1, normal lojik)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  ⚠ ÖNEMLI: STM32F4'te donanımsal UART inversiyonu YOKTUR.
-    SBUS sinyali inverted (ters) lojikte çalışır.
-    Bir NPN transistör (2N2222 veya BC547) ile terslemek gerekir.
+  ✅ iBUS'ta inverter GEREKMEZ! Doğrudan bağlantı yeterlidir.
+     Desteklenen alıcılar: FlySky FS-iA6B, FS-iA10, FS-X6B, vb.
 
-  INVERTERDevresi:
-  ┌─────────────────────────────────────────┐
-  │                                         │
-  │  RC Alıcı SBUS ──── 10kΩ ──── Base     │
-  │                                │        │
-  │                              NPN (2N2222)│
-  │                                │        │
-  │  STM32 PA10 ──── 10kΩ ──── Collector   │
-  │  (3.3V'a pull-up)               │        │
-  │                              Emitter    │
-  │                                │        │
-  │                               GND       │
-  └─────────────────────────────────────────┘
+  RC Alıcı (iBUS)  STM32F407
+  ───────────────  ──────────────────────
+  VCC         ──►  5V  (ESC BEC'ten)
+  GND         ──►  GND (ortak)
+  iBUS        ──►  PA10 (USART1_RX)  ← doğrudan, kablo yeterli!
 
-  RC Alıcı         NPN Devre         STM32F407
-  ─────────        ──────────        ──────────────────────
-  VCC         ──►  (Alıcı 5V ister) 5V (BEC'ten)
-  GND         ──►  GND              GND
-  SBUS OUT    ──►  10kΩ → Base      Collector → PA10 (USART1_RX)
-                   Emitter → GND    + 10kΩ pull-up → 3.3V
+  Not: FlySky alıcıda iBUS çıkışı ayrı bir pin veya porttaki
+  "IBUS" yazılı konnektörden çıkar. PWM pinlerinden değil!
 
   Kanal atamaları (Mode 2 kumanda):
     CH1 (Aileron)  → Sağ stick yatay
@@ -152,10 +139,9 @@
 
                      ┌──────────────┐
    2.4GHz ─────────►│  RC Alıcı   │
-                     │  (FrSky vb) │
+                     │ (FlySky iA6B)│
                      └──────┬───────┘
-                            │ SBUS (inverted)
-                       [NPN inv.]
+                            │ iBUS (normal lojik, doğrudan)
                             │
   ┌──────────────────────────▼──────────────────────────────────────────┐
   │                      STM32F407VGT6                                   │
