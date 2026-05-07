@@ -1,0 +1,192 @@
+╔══════════════════════════════════════════════════════════════════════════╗
+║           FIXED-WING IHA – BAĞLANTI ŞEMASI                            ║
+║           STM32F407VGT6 + MPU6050 + Ublox M8N + RC Alıcı (SBUS)      ║
+╚══════════════════════════════════════════════════════════════════════════╝
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 1. GÜÇ DAĞITIMI
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  LiPo 3S (11.1V)
+       │
+       ├──────────────────────────────── ESC (+) ve (-) direkt
+       │                                    └── Brushless Motor (3 faz)
+       │                                    └── BEC çıkışı: 5V / 3A
+       │                                            │
+       │                               ┌────────────┴────────────┐
+       │                               │    Servo Rail (5V)      │
+       │                               │  Aileron Sol, Aileron   │
+       │                               │  Sağ, Elevator, Rudder  │
+       │                               └─────────────────────────┘
+       │
+       └── DC-DC (7805 veya LM2596) → 5V → STM32F4 VIN (veya USB'den)
+                                           └── 3.3V (AMS1117, STM32 dahili)
+                                                  ├── MPU6050 VCC
+                                                  └── GPS VCC
+
+  ⚠ ESC BEC'i hem servo'ları hem STM32'yi besleyebilir (tek BEC yeterli)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 2. MPU6050 IMU  (I2C1, 400 kHz Fast Mode)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  MPU6050          STM32F407
+  ─────────        ──────────────────────
+  VCC         ──►  3.3V
+  GND         ──►  GND
+  SCL         ──►  PB8  (I2C1_SCL)  ←── 4.7kΩ pull-up → 3.3V
+  SDA         ──►  PB9  (I2C1_SDA)  ←── 4.7kΩ pull-up → 3.3V
+  AD0         ──►  GND  (I2C adresi: 0x68)
+  INT         ──►  (bağlanmayabilir, polling kullanılıyor)
+
+  Montaj notu: MPU6050'yi gövdenin ağırlık merkezine yakın,
+  titreşim sönümleyici (sünger) üzerine monte et.
+  X ekseni ileri, Y sol, Z yukarı olacak şekilde yerleştir.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 3. UBLOX M8N GPS  (UART2, 115200 baud)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  GPS Modülü       STM32F407
+  ──────────       ──────────────────────
+  VCC         ──►  3.3V  (bazı modüller 5V ister, kontrol et!)
+  GND         ──►  GND
+  TX          ──►  PA3   (USART2_RX)
+  RX          ──►  PA2   (USART2_TX)  ← opsiyonel, config için gerekli
+
+  Montaj notu: GPS antenini açık gökyüzüne bakan düz yüzeye,
+  gövdenin üst kısmına yerleştir. Metalden uzak tut.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 4. RC ALICI – SBUS  (UART1, 100000 baud, 8E2, inverted)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ⚠ ÖNEMLI: STM32F4'te donanımsal UART inversiyonu YOKTUR.
+    SBUS sinyali inverted (ters) lojikte çalışır.
+    Bir NPN transistör (2N2222 veya BC547) ile terslemek gerekir.
+
+  INVERTERDevresi:
+  ┌─────────────────────────────────────────┐
+  │                                         │
+  │  RC Alıcı SBUS ──── 10kΩ ──── Base     │
+  │                                │        │
+  │                              NPN (2N2222)│
+  │                                │        │
+  │  STM32 PA10 ──── 10kΩ ──── Collector   │
+  │  (3.3V'a pull-up)               │        │
+  │                              Emitter    │
+  │                                │        │
+  │                               GND       │
+  └─────────────────────────────────────────┘
+
+  RC Alıcı         NPN Devre         STM32F407
+  ─────────        ──────────        ──────────────────────
+  VCC         ──►  (Alıcı 5V ister) 5V (BEC'ten)
+  GND         ──►  GND              GND
+  SBUS OUT    ──►  10kΩ → Base      Collector → PA10 (USART1_RX)
+                   Emitter → GND    + 10kΩ pull-up → 3.3V
+
+  Kanal atamaları (Mode 2 kumanda):
+    CH1 (Aileron)  → Sağ stick yatay
+    CH2 (Elevator) → Sağ stick dikey
+    CH3 (Throttle) → Sol stick dikey
+    CH4 (Rudder)   → Sol stick yatay
+    CH5 (Mod SW)   → 3-konumlu anahtar
+                     Aşağı  → MANUAL
+                     Orta/Yukarı → STABILIZE
+    CH6 (Arm SW)   → 2-konumlu anahtar
+                     Aşağı → DISARM
+                     Yukarı → ARM
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 5. SERVO MOTORLAR  (TIM1, 400 Hz PWM)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Servo          STM32F407         PWM (400 Hz)
+  ──────────     ──────────────    ──────────────────────
+  Aileron Sol    PE9  (TIM1_CH1)  1000–2000 µs
+  Aileron Sağ    PE11 (TIM1_CH2)  1000–2000 µs (kod ters çevirir)
+  Elevator       PE13 (TIM1_CH3)  1000–2000 µs
+  Rudder         PE14 (TIM1_CH4)  1000–2000 µs
+
+  Her servo: Sinyal → STM32 pin
+             VCC    → 5V (ESC BEC)
+             GND    → ortak GND (STM32 GND ile birleşik)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 6. BRUSHLESS MOTOR / ESC  (TIM3, 400 Hz PWM)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ESC              STM32F407
+  ─────────        ──────────────────────
+  Sinyal      ──►  PA6  (TIM3_CH1)   PWM: 1000 µs=dur, 2000 µs=tam gaz
+  GND         ──►  GND  (ortak)
+  BEC 5V      ──►  Servo rail + STM32 VIN
+
+  ESC → Motor: 3 faz kablosu (sıra önemsiz, dönüş yönü ters gelirse
+  herhangi iki kabloyu birbiriyle değiştir)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 7. TAM PIN TABLOSU (STM32F407VGT6)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Pin    Fonksiyon       Bağlantı               Açıklama
+  ─────  ──────────────  ─────────────────────  ─────────────────────
+  PB8    I2C1_SCL        MPU6050 SCL            4.7kΩ pull-up
+  PB9    I2C1_SDA        MPU6050 SDA            4.7kΩ pull-up
+  PA2    USART2_TX       GPS RX                 115200 baud
+  PA3    USART2_RX       GPS TX                 115200 baud
+  PA10   USART1_RX       RC Alıcı SBUS (INV)   100kbaud 8E2
+  PE9    TIM1_CH1 PWM    Aileron Sol Servo      400 Hz
+  PE11   TIM1_CH2 PWM    Aileron Sağ Servo      400 Hz (kod ters çevirir)
+  PE13   TIM1_CH3 PWM    Elevator Servo         400 Hz
+  PE14   TIM1_CH4 PWM    Rudder Servo           400 Hz
+  PA6    TIM3_CH1 PWM    ESC Sinyal             400 Hz, 1000-2000 µs
+  3.3V   PWR             MPU6050, GPS VCC       STM32 onboard regulator
+  5V     PWR             ESC BEC → Servolara    BEC üzerinden
+  GND    GND             Tüm modüller           Ortak GND zorunlu!
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 8. BLOK DİYAGRAM
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+                     ┌──────────────┐
+   2.4GHz ─────────►│  RC Alıcı   │
+                     │  (FrSky vb) │
+                     └──────┬───────┘
+                            │ SBUS (inverted)
+                       [NPN inv.]
+                            │
+  ┌──────────────────────────▼──────────────────────────────────────────┐
+  │                      STM32F407VGT6                                   │
+  │                                                                      │
+  │  USART1_RX(PA10)◄── SBUS     USART2_RX(PA3) ◄── GPS TX            │
+  │  I2C1(PB8/PB9)  ◄── MPU6050                                        │
+  │                                                                      │
+  │  FreeRTOS Görevleri:                                                │
+  │    task_rc      (RC parse, 14ms)                                    │
+  │    task_imu     (Madgwick filtresi, 1kHz)                           │
+  │    task_control (PID döngüsü, 400Hz)                               │
+  │    task_gps     (NMEA parse, 10Hz)                                  │
+  │                                                                      │
+  │  TIM1_CH1 (PE9)  ──► Aileron Sol                                   │
+  │  TIM1_CH2 (PE11) ──► Aileron Sağ                                   │
+  │  TIM1_CH3 (PE13) ──► Elevator                                      │
+  │  TIM1_CH4 (PE14) ──► Rudder                                        │
+  │  TIM3_CH1 (PA6)  ──► ESC ──► Brushless Motor                      │
+  └──────────────────────────────────────────────────────────────────────┘
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 9. İLK ÇALIŞTIIRMA SIRASI
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  1. Motoru ÇIKARIN (pervaneyi sökerek) – ESC arming tehlikeli!
+  2. LiPo bağla → LED'ler çalışıyorsa güç OK
+  3. RC kumandayı aç, CH6'yı DISARM konumuna al
+  4. Kodu STM32'ye yükle (ST-Link / OpenOCD)
+  5. Seri portu aç (115200 baud) – telemetri mesajlarını izle
+  6. CH6'yı ARM konumuna al → "FC: ARMED" mesajı gelmeli
+  7. CH5'i MANUAL'a al → servo'ların kumandaya tepki verdiğini kontrol et
+  8. CH5'i STABILIZE'a al → gövdeyi elle yatırınca servo'ların
+     düzeltme yaptığını kontrol et
+  9. Pervaneyi tak, açık alanda uç!

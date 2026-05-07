@@ -59,10 +59,37 @@
 /* ── Madgwick filtresi ───────────────────────────────────── */
 #define MADGWICK_BETA           0.1f
 
+/* ── RC Alıcı (SBUS) ─────────────────────────────────────── */
+#define RC_CHANNELS             8
+#define SBUS_BAUDRATE           100000u    /* 100 kbaud, 8E2, inverted */
+#define SBUS_FRAME_LEN          25u
+#define SBUS_START_BYTE         0x0F
+#define SBUS_END_BYTE           0x00
+#define SBUS_RAW_MIN            172
+#define SBUS_RAW_MAX            1811
+#define SBUS_FAILSAFE_FLAG      (1 << 3)
+#define SBUS_FRAMELOST_FLAG     (1 << 2)
+
+/* RC kanal atamaları (Mode 2 kumanda) */
+#define RC_CH_AILERON           0    /* sağ stick yatay */
+#define RC_CH_ELEVATOR          1    /* sağ stick dikey */
+#define RC_CH_THROTTLE          2    /* sol stick dikey */
+#define RC_CH_RUDDER            3    /* sol stick yatay */
+#define RC_CH_MODE              4    /* mod anahtarı: <-0.5=MANUAL, >0.5=STABILIZE */
+#define RC_CH_ARM               5    /* arm anahtarı: >0.5=ARM */
+
+/* Yarı otopilot sınırları */
+#define STAB_MAX_ROLL_DEG       45.0f
+#define STAB_MAX_PITCH_DEG      25.0f
+#define STAB_MAX_YAW_RATE_DPS   60.0f
+#define FAILSAFE_THROTTLE       0.35f  /* RC kesilince güvenli rölanti */
+#define FAILSAFE_PITCH_DEG      3.0f   /* hafif kalkış pitchi */
+
 /* ── FreeRTOS görev öncelikleri ──────────────────────────── */
 #define TASK_PRIO_IMU           5
 #define TASK_PRIO_CONTROL       4
 #define TASK_PRIO_GPS           3
+#define TASK_PRIO_RC            4      /* kontrol ile aynı öncelik */
 #define TASK_PRIO_TELEMETRY     1
 
 /* ── Simülasyon UDP portları ─────────────────────────────── */

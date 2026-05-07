@@ -10,6 +10,7 @@ SRCS = sim_main.c \
        ../Core/Src/madgwick.c \
        ../Core/Src/pid.c \
        ../Core/Src/servo.c \
+       ../Core/Src/rc_input.c \
        ../Core/Src/flight_control.c
 
 all: $(TARGET)

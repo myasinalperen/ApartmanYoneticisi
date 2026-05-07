@@ -2,8 +2,11 @@
  * Fixed-Wing IHA Uçuş Bilgisayarı
  * Hedef: STM32F407VGT6 + FreeRTOS
  *
- * Bu dosya STM32 hedefi içindir.
- * PC simülasyonu için Simulation/sim_main.c'yi kullan.
+ * Mod mantığı:
+ *   RC CH5 < 0  → MANUAL    (saf manuel, PID yok)
+ *   RC CH5 > 0  → STABILIZE (FBW-A, RC açı komutu verir PID tamamlar)
+ *   RC CH6 > 0.5 → ARM / < 0.5 → DISARM
+ *   RC kaybı (>500ms) → FAILSAFE (STABILIZE + sabit throttle)
  */
 
 #ifndef SIMULATION
@@ -16,28 +19,51 @@
 #include "config.h"
 #include "imu.h"
 #include "gps.h"
+#include "rc_input.h"
 #include "flight_control.h"
 #include "hal_wrapper.h"
 
-/* ── Çevre birimleri (CubeMX tarafından üretilecek) ──────── */
+/* ── Çevre birimleri ─────────────────────────────────────── */
 I2C_HandleTypeDef  hi2c1;
-UART_HandleTypeDef huart2;
+UART_HandleTypeDef huart1;   /* SBUS RC alıcı */
+UART_HandleTypeDef huart2;   /* GPS */
 TIM_HandleTypeDef  htim1;
 TIM_HandleTypeDef  htim3;
 
 /* ── Paylaşılan durum ────────────────────────────────────── */
 static IMU              g_imu;
 static GPSData          g_gps;
+static RCInput          g_rc;
 static FlightController g_fc;
-static SemaphoreHandle_t g_imu_mutex;
-static SemaphoreHandle_t g_gps_mutex;
+
+/* SBUS DMA tamponu */
+static uint8_t sbus_dma_buf[SBUS_FRAME_LEN * 2];
+
+/* ── RC görevi – SBUS DMA tamamlanınca çağrılır ────────── */
+static void task_rc(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        /* DMA transfer tamamlanana kadar bekle (bildirim ile uyanır) */
+        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(20));
+
+        /* SBUS çerçevesini bul ve işle */
+        for (int i = 0; i <= SBUS_FRAME_LEN; i++) {
+            if (sbus_dma_buf[i] == SBUS_START_BYTE) {
+                rc_input_parse(&g_rc, &sbus_dma_buf[i]);
+                break;
+            }
+        }
+        /* DMA'yı yeniden başlat */
+        HAL_UART_Receive_DMA(&huart1, sbus_dma_buf, SBUS_FRAME_LEN);
+    }
+}
 
 /* ── IMU görevi – 1000 Hz ────────────────────────────────── */
 static void task_imu(void *arg)
 {
     (void)arg;
     TickType_t xLastWake = xTaskGetTickCount();
-
     for (;;) {
         imu_update(&g_imu);
         vTaskDelayUntil(&xLastWake, pdMS_TO_TICKS(1));
@@ -49,9 +75,8 @@ static void task_control(void *arg)
 {
     (void)arg;
     TickType_t xLastWake = xTaskGetTickCount();
-
     for (;;) {
-        fc_update(&g_fc, &g_imu, CTRL_DT);
+        fc_update(&g_fc, &g_imu, &g_rc, CTRL_DT);
         vTaskDelayUntil(&xLastWake, pdMS_TO_TICKS(1000 / CTRL_LOOP_RATE_HZ));
     }
 }
@@ -61,37 +86,39 @@ static void task_gps(void *arg)
 {
     (void)arg;
     TickType_t xLastWake = xTaskGetTickCount();
-
     for (;;) {
         gps_update(&g_gps);
-        vTaskDelayUntil(&xLastWake, pdMS_TO_TICKS(1000 / GPS_UPDATE_RATE_HZ));
-    }
-}
-
-/* ── Telemetri görevi – 10 Hz (seri port) ────────────────── */
-static void task_telemetry(void *arg)
-{
-    (void)arg;
-    TickType_t xLastWake = xTaskGetTickCount();
-
-    for (;;) {
-        hw_log("R:%.1f P:%.1f Y:%.1f THR:%.2f GPS:%d\n",
-               imu_roll_deg(&g_imu),
-               imu_pitch_deg(&g_imu),
-               imu_yaw_deg(&g_imu),
-               g_fc.throttle,
-               g_gps.fix_valid);
         vTaskDelayUntil(&xLastWake, pdMS_TO_TICKS(100));
     }
 }
 
-/* ── Çevre birimi başlatma (CubeMX'in ürettiği MX_ fonksiyonları) ── */
+/* ── Telemetri – 5 Hz ────────────────────────────────────── */
+static void task_telemetry(void *arg)
+{
+    (void)arg;
+    TickType_t xLastWake = xTaskGetTickCount();
+    for (;;) {
+        hw_log("MOD:%s R:%+5.1f P:%+5.1f Y:%+5.1f THR:%.2f GPS:%d\n",
+               fc_mode_str(g_fc.mode),
+               imu_roll_deg(&g_imu),
+               imu_pitch_deg(&g_imu),
+               imu_yaw_deg(&g_imu),
+               g_fc.out_throttle,
+               g_gps.fix_valid);
+        vTaskDelayUntil(&xLastWake, pdMS_TO_TICKS(200));
+    }
+}
+
+/* ── Çevre birimi başlatma fonksiyonları ─────────────────── */
 static void system_clock_config(void);
 static void mx_gpio_init(void);
 static void mx_i2c1_init(void);
-static void mx_usart2_init(void);
+static void mx_usart1_sbus_init(void);
+static void mx_usart2_gps_init(void);
 static void mx_tim1_pwm_init(void);
 static void mx_tim3_pwm_init(void);
+
+static TaskHandle_t rc_task_handle = NULL;
 
 int main(void)
 {
@@ -99,39 +126,40 @@ int main(void)
     system_clock_config();
     mx_gpio_init();
     mx_i2c1_init();
-    mx_usart2_init();
+    mx_usart1_sbus_init();
+    mx_usart2_gps_init();
     mx_tim1_pwm_init();
     mx_tim3_pwm_init();
 
-    /* Modül başlatma */
-    if (!imu_init(&g_imu)) {
-        /* IMU başlamazsa döngüde kal – watchdog sıfırlayacak */
-        while (1) { HAL_Delay(1000); }
-    }
+    if (!imu_init(&g_imu)) while (1);
     gps_init();
+    rc_input_init(&g_rc);
     fc_init(&g_fc);
 
-    /* Mutex oluştur */
-    g_imu_mutex = xSemaphoreCreateMutex();
-    g_gps_mutex = xSemaphoreCreateMutex();
+    /* SBUS DMA başlat */
+    HAL_UART_Receive_DMA(&huart1, sbus_dma_buf, SBUS_FRAME_LEN);
 
-    /* Görevleri oluştur */
+    xTaskCreate(task_rc,        "RC",   256, NULL, TASK_PRIO_RC,        &rc_task_handle);
     xTaskCreate(task_imu,       "IMU",  512, NULL, TASK_PRIO_IMU,       NULL);
     xTaskCreate(task_control,   "CTRL", 512, NULL, TASK_PRIO_CONTROL,   NULL);
     xTaskCreate(task_gps,       "GPS",  512, NULL, TASK_PRIO_GPS,       NULL);
     xTaskCreate(task_telemetry, "TEL",  256, NULL, TASK_PRIO_TELEMETRY, NULL);
 
-    /* ESC silahlan */
-    fc_arm(&g_fc);
-    g_fc.throttle = 0.0f;
-
     vTaskStartScheduler();
-
-    /* Buraya ulaşılmamalı */
     while (1);
 }
 
-/* ── STM32F407 @ 168 MHz HSE 8 MHz ──────────────────────── */
+/* UART1 DMA tamamlanınca RC görevini uyandır */
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+    if (huart->Instance == USART1 && rc_task_handle) {
+        BaseType_t higher_prio_woken = pdFALSE;
+        vTaskNotifyGiveFromISR(rc_task_handle, &higher_prio_woken);
+        portYIELD_FROM_ISR(higher_prio_woken);
+    }
+}
+
+/* ── STM32F407 @ 168 MHz ─────────────────────────────────── */
 static void system_clock_config(void)
 {
     RCC_OscInitTypeDef RCC_OscInitStruct = {0};
@@ -140,14 +168,14 @@ static void system_clock_config(void)
     __HAL_RCC_PWR_CLK_ENABLE();
     __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
 
-    RCC_OscInitStruct.OscillatorType      = RCC_OSCILLATORTYPE_HSE;
-    RCC_OscInitStruct.HSEState            = RCC_HSE_ON;
-    RCC_OscInitStruct.PLL.PLLState        = RCC_PLL_ON;
-    RCC_OscInitStruct.PLL.PLLSource       = RCC_PLLSOURCE_HSE;
-    RCC_OscInitStruct.PLL.PLLM            = 4;
-    RCC_OscInitStruct.PLL.PLLN            = 168;
-    RCC_OscInitStruct.PLL.PLLP            = RCC_PLLP_DIV2;
-    RCC_OscInitStruct.PLL.PLLQ            = 7;
+    RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+    RCC_OscInitStruct.HSEState       = RCC_HSE_ON;
+    RCC_OscInitStruct.PLL.PLLState   = RCC_PLL_ON;
+    RCC_OscInitStruct.PLL.PLLSource  = RCC_PLLSOURCE_HSE;
+    RCC_OscInitStruct.PLL.PLLM       = 4;
+    RCC_OscInitStruct.PLL.PLLN       = 168;
+    RCC_OscInitStruct.PLL.PLLP       = RCC_PLLP_DIV2;
+    RCC_OscInitStruct.PLL.PLLQ       = 7;
     HAL_RCC_OscConfig(&RCC_OscInitStruct);
 
     RCC_ClkInitStruct.ClockType      = RCC_CLOCKTYPE_SYSCLK | RCC_CLOCKTYPE_HCLK
@@ -170,7 +198,7 @@ static void mx_i2c1_init(void)
 {
     __HAL_RCC_I2C1_CLK_ENABLE();
     hi2c1.Instance             = I2C1;
-    hi2c1.Init.ClockSpeed      = 400000;  /* 400 kHz Fast Mode */
+    hi2c1.Init.ClockSpeed      = 400000;
     hi2c1.Init.DutyCycle       = I2C_DUTYCYCLE_2;
     hi2c1.Init.OwnAddress1     = 0;
     hi2c1.Init.AddressingMode  = I2C_ADDRESSINGMODE_7BIT;
@@ -180,7 +208,25 @@ static void mx_i2c1_init(void)
     HAL_I2C_Init(&hi2c1);
 }
 
-static void mx_usart2_init(void)
+/* USART1 – SBUS: 100000 baud, 8E2
+ * PA10 = RX (inverter üzerinden RC alıcıya)
+ * NOT: STM32F4 donanımsal UART inversiyonu desteklemez.
+ *      Dış inverter gereklidir (bkz. wiring.txt)        */
+static void mx_usart1_sbus_init(void)
+{
+    __HAL_RCC_USART1_CLK_ENABLE();
+    huart1.Instance          = USART1;
+    huart1.Init.BaudRate     = SBUS_BAUDRATE;
+    huart1.Init.WordLength   = UART_WORDLENGTH_9B;  /* 8 bit data + parity = 9 */
+    huart1.Init.StopBits     = UART_STOPBITS_2;
+    huart1.Init.Parity       = UART_PARITY_EVEN;
+    huart1.Init.Mode         = UART_MODE_RX;
+    huart1.Init.HwFlowCtl    = UART_HWCONTROL_NONE;
+    huart1.Init.OverSampling = UART_OVERSAMPLING_16;
+    HAL_UART_Init(&huart1);
+}
+
+static void mx_usart2_gps_init(void)
 {
     __HAL_RCC_USART2_CLK_ENABLE();
     huart2.Instance          = USART2;
@@ -194,19 +240,16 @@ static void mx_usart2_init(void)
     HAL_UART_Init(&huart2);
 }
 
-/* TIM1 → 4 servo kanalı (PE9, PE11, PE13, PE14)
- * TIM1_CLK = APB2 × 2 = 168 MHz
- * Prescaler = 167 → 1 MHz sayacı
- * Period = 2500 - 1 → 400 Hz PWM */
+/* TIM1 → 4 servo: PE9/PE11/PE13/PE14, 400 Hz PWM */
 static void mx_tim1_pwm_init(void)
 {
     __HAL_RCC_TIM1_CLK_ENABLE();
     TIM_OC_InitTypeDef sConfig = {0};
 
     htim1.Instance               = TIM1;
-    htim1.Init.Prescaler         = 167;
+    htim1.Init.Prescaler         = 167;    /* 168 MHz / 168 = 1 MHz sayacı */
     htim1.Init.CounterMode       = TIM_COUNTERMODE_UP;
-    htim1.Init.Period            = 2500 - 1;
+    htim1.Init.Period            = 2500 - 1;  /* 1 MHz / 2500 = 400 Hz */
     htim1.Init.ClockDivision     = TIM_CLOCKDIVISION_DIV1;
     htim1.Init.RepetitionCounter = 0;
     HAL_TIM_PWM_Init(&htim1);
@@ -214,28 +257,27 @@ static void mx_tim1_pwm_init(void)
     sConfig.OCMode     = TIM_OCMODE_PWM1;
     sConfig.Pulse      = SERVO_PULSE_MID_US;
     sConfig.OCPolarity = TIM_OCPOLARITY_HIGH;
-    sConfig.OCFastMode = TIM_OCFAST_DISABLE;
     sConfig.OCNPolarity= TIM_OCNPOLARITY_HIGH;
+    sConfig.OCFastMode = TIM_OCFAST_DISABLE;
 
     HAL_TIM_PWM_ConfigChannel(&htim1, &sConfig, TIM_CHANNEL_1);
     HAL_TIM_PWM_ConfigChannel(&htim1, &sConfig, TIM_CHANNEL_2);
     HAL_TIM_PWM_ConfigChannel(&htim1, &sConfig, TIM_CHANNEL_3);
     HAL_TIM_PWM_ConfigChannel(&htim1, &sConfig, TIM_CHANNEL_4);
-
     HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
     HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
     HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
     HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_4);
 }
 
-/* TIM3 → ESC kanalı (PA6) */
+/* TIM3 → ESC: PA6, 400 Hz PWM */
 static void mx_tim3_pwm_init(void)
 {
     __HAL_RCC_TIM3_CLK_ENABLE();
     TIM_OC_InitTypeDef sConfig = {0};
 
     htim3.Instance           = TIM3;
-    htim3.Init.Prescaler     = 83;   /* APB1 × 2 = 84 MHz → 1 MHz sayacı */
+    htim3.Init.Prescaler     = 83;    /* 84 MHz / 84 = 1 MHz sayacı */
     htim3.Init.CounterMode   = TIM_COUNTERMODE_UP;
     htim3.Init.Period        = 2500 - 1;
     htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
@@ -249,7 +291,6 @@ static void mx_tim3_pwm_init(void)
     HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
 }
 
-/* FreeRTOS stack overflow kancası */
 void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
 {
     (void)xTask; (void)pcTaskName;
