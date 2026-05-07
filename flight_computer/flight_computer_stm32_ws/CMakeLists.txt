@@ -6,43 +6,68 @@ project(FlightComputer C ASM)
 
 set(CMAKE_C_STANDARD 11)
 
-# ── HAL sürücü klasörü (STM32CubeMX ile indir, buraya koy) ───────
-# Beklenen yapı:
-#   Drivers/
-#     STM32F4xx_HAL_Driver/Inc/
-#     STM32F4xx_HAL_Driver/Src/
-#     CMSIS/Device/ST/STM32F4xx/Include/
-#     CMSIS/Include/
-# Dizin yoksa hata ver
-set(HAL_DIR  "${CMAKE_SOURCE_DIR}/../Drivers/STM32F4xx_HAL_Driver")
-set(CMSIS_DEVICE "${CMAKE_SOURCE_DIR}/../Drivers/CMSIS/Device/ST/STM32F4xx/Include")
-set(CMSIS_CORE   "${CMAKE_SOURCE_DIR}/../Drivers/CMSIS/Include")
+# ── Kütüphane konumu otomatik algılama ───────────────────────────
+# Önce revengefc/ (CubeMX ile oluşturulan) dizinine bak,
+# yoksa ../Drivers/ ve ../Middlewares/ dizinlerine bak.
+set(_CUBEMX_DIR "${CMAKE_SOURCE_DIR}/revengefc")
 
-if(NOT EXISTS "${HAL_DIR}/Inc/stm32f4xx_hal.h")
+if(EXISTS "${_CUBEMX_DIR}/Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal.h")
+    # CubeMX revengefc/ altında kod üretmiş
+    set(HAL_DIR      "${_CUBEMX_DIR}/Drivers/STM32F4xx_HAL_Driver")
+    set(CMSIS_DEVICE "${_CUBEMX_DIR}/Drivers/CMSIS/Device/ST/STM32F4xx/Include")
+    set(CMSIS_CORE   "${_CUBEMX_DIR}/Drivers/CMSIS/Include")
+    set(FREERTOS_DIR "${_CUBEMX_DIR}/Middlewares/FreeRTOS/Source")
+    set(CUBEMX_CORE  "${_CUBEMX_DIR}/Core")
+    message(STATUS "HAL kaynağı: revengefc/ (CubeMX çıktısı)")
+elseif(EXISTS "${CMAKE_SOURCE_DIR}/../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal.h")
+    # Eski konum (manuel kurulum)
+    set(HAL_DIR      "${CMAKE_SOURCE_DIR}/../Drivers/STM32F4xx_HAL_Driver")
+    set(CMSIS_DEVICE "${CMAKE_SOURCE_DIR}/../Drivers/CMSIS/Device/ST/STM32F4xx/Include")
+    set(CMSIS_CORE   "${CMAKE_SOURCE_DIR}/../Drivers/CMSIS/Include")
+    set(FREERTOS_DIR "${CMAKE_SOURCE_DIR}/../Middlewares/FreeRTOS/Source")
+    set(CUBEMX_CORE  "")
+    message(STATUS "HAL kaynağı: ../Drivers/ (manuel kurulum)")
+else()
     message(FATAL_ERROR
         "\n"
         "============================================================\n"
         " HAL sürücüleri bulunamadı!\n"
-        " KURULUM_REHBERI.md dosyasındaki ADIM 3'ü uygulayın.\n"
-        " Beklenen konum: ${HAL_DIR}/Inc/stm32f4xx_hal.h\n"
+        "\n"
+        " Seçenek 1 (Önerilen): STM32CubeMX ile revengefc.ioc dosyasını\n"
+        "   açın → 'Generate Code' butonuna basın.\n"
+        "   Beklenen: revengefc/Drivers/STM32F4xx_HAL_Driver/\n"
+        "\n"
+        " Seçenek 2: KURULUM_REHBERI.md → ADIM 3'ü uygulayın.\n"
+        "   Beklenen: ../Drivers/STM32F4xx_HAL_Driver/\n"
         "============================================================\n"
     )
 endif()
 
-# ── FreeRTOS klasörü ─────────────────────────────────────────────
-set(FREERTOS_DIR "${CMAKE_SOURCE_DIR}/../Middlewares/FreeRTOS/Source")
 if(NOT EXISTS "${FREERTOS_DIR}/include/FreeRTOS.h")
     message(FATAL_ERROR
         "\n"
         "============================================================\n"
         " FreeRTOS bulunamadı!\n"
-        " KURULUM_REHBERI.md dosyasındaki ADIM 3'ü uygulayın.\n"
-        " Beklenen konum: ${FREERTOS_DIR}/include/FreeRTOS.h\n"
+        " STM32CubeMX ile revengefc.ioc'yi açıp 'Generate Code' yapın.\n"
+        " Beklenen: ${FREERTOS_DIR}/include/FreeRTOS.h\n"
         "============================================================\n"
     )
 endif()
 
 # ── Kaynak dosyalar ──────────────────────────────────────────────
+# CubeMX tarafından üretilen başlatma dosyaları (varsa)
+set(CUBEMX_SOURCES "")
+if(NOT "${CUBEMX_CORE}" STREQUAL "")
+    file(GLOB CUBEMX_SOURCES
+        "${CUBEMX_CORE}/Src/stm32f4xx_hal_msp.c"
+        "${CUBEMX_CORE}/Src/stm32f4xx_it.c"
+        "${CUBEMX_CORE}/Src/freertos.c"
+        "${CUBEMX_CORE}/Src/syscalls.c"
+        "${CUBEMX_CORE}/Src/sysmem.c"
+    )
+    # CubeMX'in main.c'si KULLANILMIYOR – uçuş bilgisayarı kendi main()'ini kullanır
+endif()
+
 set(APP_SOURCES
     # Uçuş bilgisayarı çekirdek
     ${CMAKE_SOURCE_DIR}/../Core/Src/main.c
@@ -57,6 +82,8 @@ set(APP_SOURCES
     ${CMAKE_SOURCE_DIR}/../Drivers/STM32/stm32_hal_impl.c
     # Startup
     ${CMAKE_SOURCE_DIR}/startup/startup_stm32f407xx.s
+    # CubeMX init dosyaları
+    ${CUBEMX_SOURCES}
 )
 
 # ── HAL kaynak dosyaları ─────────────────────────────────────────
@@ -85,8 +112,14 @@ add_executable(${PROJECT_NAME}.elf
 )
 
 # ── Include dizinleri ────────────────────────────────────────────
+set(_CUBEMX_INC "")
+if(NOT "${CUBEMX_CORE}" STREQUAL "")
+    set(_CUBEMX_INC "${CUBEMX_CORE}/Inc")
+endif()
+
 target_include_directories(${PROJECT_NAME}.elf PRIVATE
     ${CMAKE_SOURCE_DIR}/../Core/Inc
+    ${_CUBEMX_INC}
     ${HAL_DIR}/Inc
     ${HAL_DIR}/Inc/Legacy
     ${CMSIS_DEVICE}

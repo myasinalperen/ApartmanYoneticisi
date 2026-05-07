@@ -5,6 +5,10 @@
             "path": "."
         },
         {
+            "name": "revengefc (CubeMX Projesi)",
+            "path": "revengefc"
+        },
+        {
             "name": "Core (Kaynak Kodlar)",
             "path": "../Core"
         },
