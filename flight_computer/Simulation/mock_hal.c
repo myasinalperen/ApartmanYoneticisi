@@ -224,7 +224,7 @@ void mock_hal_init(void)
 
     /* Sensör sıfırla */
     memset(&g_sensors, 0, sizeof(g_sensors));
-    g_sensors.az_ms2  = -9.80665;
+    g_sensors.az_ms2  = +9.80665;   /* MPU6050 Z↑: reads +g at rest */
     g_sensors.lat_deg = 41.0;
     g_sensors.lon_deg = 29.0;
     g_sensors.alt_m   = 100.0;

@@ -57,7 +57,11 @@
 #define YAW_RATE_IMAX           0.4f
 
 /* ── Madgwick filtresi ───────────────────────────────────── */
+#ifdef SIMULATION
+#define MADGWICK_BETA           2.0f   /* Simülasyonda hızlı yakınsama */
+#else
 #define MADGWICK_BETA           0.1f
+#endif
 
 /* ── RC Alıcı (FlySky iBUS) ──────────────────────────────── */
 /* iBUS: 115200 baud, 8N1, NORMAL lojik – inverter GEREKMİYOR */

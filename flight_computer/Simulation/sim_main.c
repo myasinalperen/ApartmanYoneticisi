@@ -164,6 +164,7 @@ int main(void)
                    imu_roll_deg(&imu), imu_pitch_deg(&imu), imu_yaw_deg(&imu),
                    fc.out_throttle, fc.out_aileron, fc.out_elevator,
                    rc_is_lost(&rc) ? "YOK" : "VAR");
+            fflush(stdout);
             t_log = now;
         }
 

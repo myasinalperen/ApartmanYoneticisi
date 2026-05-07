@@ -27,8 +27,15 @@ SENSOR_FMT = "<13d"
 
 def sensor_pkt(roll=0.0, pitch=0.0, yaw=0.0,
                roll_rate=0.0, pitch_rate=0.0, yaw_rate=0.0,
-               ax=0.0, ay=0.0, az=-9.80665,
+               ax=None, ay=None, az=None,
                lat=41.0, lon=29.0, alt=100.0, airspeed=20.0):
+    # Compute gravity decomposition for given attitude so Madgwick filter
+    # estimates the correct roll/pitch.
+    r, p = math.radians(roll), math.radians(pitch)
+    # Real MPU6050 (Z up): az = +g at level; gravity decomposition for given attitude.
+    if ax is None: ax = -9.80665 * math.sin(p)
+    if ay is None: ay =  9.80665 * math.sin(r) * math.cos(p)
+    if az is None: az =  9.80665 * math.cos(r) * math.cos(p)
     return struct.pack(SENSOR_FMT,
         math.radians(roll), math.radians(pitch), math.radians(yaw),
         math.radians(roll_rate), math.radians(pitch_rate), math.radians(yaw_rate),
