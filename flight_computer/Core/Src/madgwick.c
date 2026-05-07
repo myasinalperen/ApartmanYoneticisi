@@ -52,7 +52,9 @@ void madgwick_update(MadgwickFilter *f,
        - _4q2 + _8q2*q1q1 + _8q2*q2q2 + _4q2*az;
     s3 = 4.0f*q1q1*q3 - _2q1*ax + 4.0f*q2q2*q3 - _2q2*ay;
 
-    norm = 1.0f / sqrtf(s0*s0 + s1*s1 + s2*s2 + s3*s3);
+    norm = sqrtf(s0*s0 + s1*s1 + s2*s2 + s3*s3);
+    if (norm < 1e-10f) return;   /* Gradyan sıfır → düzeltmeye gerek yok */
+    norm = 1.0f / norm;
     s0 *= norm; s1 *= norm; s2 *= norm; s3 *= norm;
 
     /* Kuaterniyon türevi = jiroskop + düzeltme */

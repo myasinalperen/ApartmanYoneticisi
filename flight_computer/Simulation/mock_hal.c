@@ -1,12 +1,18 @@
 /*
  * PC simülasyonu için sahte HAL implementasyonu.
- * Gerçek donanım yerine JSBSim UDP köprüsünden veri alır.
+ *
+ * UDP portları:
+ *   5500 ← sensör (JSBSim veya test_runner.py)
+ *   5501 → kontrol (JSBSim'e)
+ *   5502 → JSON telemetri (web / test_runner.py okur)
+ *   5503 ← RC kanalları (test_runner.py: 14×uint16 LE, 1000-2000)
  */
 
 #ifdef SIMULATION
 
 #include "hal_wrapper.h"
 #include "config.h"
+#include "rc_input.h"
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
@@ -17,51 +23,60 @@
 #include <sys/socket.h>
 #include <fcntl.h>
 
-/* ── JSBSim UDP soketi ───────────────────────────────────── */
-static int      g_recv_sock = -1;
-static int      g_send_sock = -1;
+#define RC_UDP_PORT  5503
+
+/* ── Soketler ────────────────────────────────────────────── */
+static int g_recv_sock = -1;   /* 5500: sensör gelen */
+static int g_send_sock = -1;   /* 5501: kontrol giden */
+static int g_rc_sock   = -1;   /* 5503: RC kanalları gelen */
 static struct sockaddr_in g_jsbsim_addr;
 
-/* JSBSim'den gelen sensör paketi */
+/* ── Sensör ve kontrol paketleri ─────────────────────────── */
 typedef struct __attribute__((packed)) {
-    double roll_rad;
-    double pitch_rad;
-    double yaw_rad;
-    double roll_rate_rads;
-    double pitch_rate_rads;
-    double yaw_rate_rads;
-    double ax_ms2;
-    double ay_ms2;
-    double az_ms2;
-    double lat_deg;
-    double lon_deg;
-    double alt_m;
-    double airspeed_ms;
+    double roll_rad, pitch_rad, yaw_rad;
+    double roll_rate_rads, pitch_rate_rads, yaw_rate_rads;
+    double ax_ms2, ay_ms2, az_ms2;
+    double lat_deg, lon_deg, alt_m, airspeed_ms;
 } SimSensorPacket;
 
-/* Uçuş bilgisayarından JSBSim'e giden kontrol paketi */
 typedef struct __attribute__((packed)) {
-    float aileron;    /* -1 … +1 */
-    float elevator;   /* -1 … +1 */
-    float rudder;     /* -1 … +1 */
-    float throttle;   /* 0 … 1   */
+    float aileron, elevator, rudder, throttle;
 } SimControlPacket;
 
 static SimSensorPacket  g_sensors;
 static SimControlPacket g_controls;
 
-/* ── IMU mock tampon ─────────────────────────────────────── */
-#define MPU6050_REG_WHO_AM_I    0x75
-#define MPU6050_REG_ACCEL_H     0x3B
-#define MPU6050_I2C_ADDR_BYTE   0x68
+/* Son gelen RC kanalları (14 kanal, µs) */
+static uint16_t g_rc_channels[IBUS_MAX_CHANNELS];
+static uint32_t g_rc_last_ms = 0;
+static bool     g_rc_received = false;
 
-static void update_sensors_from_jsbsim(void)
+/* ── Sensörü JSBSim / test_runner'dan güncelle ───────────── */
+static void update_sensors_from_udp(void)
 {
     SimSensorPacket pkt;
     ssize_t n = recv(g_recv_sock, &pkt, sizeof(pkt), MSG_DONTWAIT);
-    if (n == (ssize_t)sizeof(pkt)) {
+    if (n == (ssize_t)sizeof(pkt))
         g_sensors = pkt;
+}
+
+/* ── RC'yi UDP'den güncelle (test_runner.py gönderir) ───── */
+void mock_hal_update_rc(uint16_t *ch_out, uint8_t count, bool *updated)
+{
+    /* Format: count × uint16_t little-endian (1000–2000 µs) */
+    uint8_t buf[IBUS_MAX_CHANNELS * 2];
+    ssize_t n = recv(g_rc_sock, buf, sizeof(buf), MSG_DONTWAIT);
+    if (n == (ssize_t)(IBUS_MAX_CHANNELS * 2)) {
+        for (int i = 0; i < IBUS_MAX_CHANNELS && i < count; i++)
+            g_rc_channels[i] = (uint16_t)(buf[i*2] | (buf[i*2+1] << 8));
+        g_rc_last_ms  = hw_get_tick_ms();
+        g_rc_received = true;
     }
+    if (ch_out) {
+        memcpy(ch_out, g_rc_channels, count * sizeof(uint16_t));
+    }
+    if (updated) *updated = g_rc_received &&
+                            (hw_get_tick_ms() - g_rc_last_ms) < 500u;
 }
 
 /* ── Zaman ───────────────────────────────────────────────── */
@@ -74,26 +89,22 @@ uint32_t hw_get_tick_ms(void)
 
 void hw_delay_ms(uint32_t ms) { usleep(ms * 1000); }
 
-/* ── I2C mock – MPU6050 ham baytlarını sim veriden üretir ── */
+/* ── I2C mock: MPU6050 ───────────────────────────────────── */
 bool hw_i2c_write(uint8_t dev_addr, uint8_t reg, const uint8_t *data, uint16_t len)
 {
     (void)dev_addr; (void)reg; (void)data; (void)len;
-    return true;   /* konfigürasyon yazmaları sessizce kabul */
+    return true;
 }
 
 bool hw_i2c_read(uint8_t dev_addr, uint8_t reg, uint8_t *data, uint16_t len)
 {
     (void)dev_addr;
 
-    if (reg == 0x75) {          /* WHO_AM_I */
-        data[0] = 0x68;
-        return true;
-    }
+    if (reg == 0x75) { data[0] = 0x68; return true; }  /* WHO_AM_I */
 
     if (reg == 0x3B && len == 14) {
-        update_sensors_from_jsbsim();
+        update_sensors_from_udp();
 
-        /* JSBSim açılarından ham ivmeölçer değerleri oluştur (yerçekimi projeksiyonu) */
         float ax = (float)(g_sensors.ax_ms2  / 9.80665 * 8192.0);
         float ay = (float)(g_sensors.ay_ms2  / 9.80665 * 8192.0);
         float az = (float)(g_sensors.az_ms2  / 9.80665 * 8192.0);
@@ -101,29 +112,23 @@ bool hw_i2c_read(uint8_t dev_addr, uint8_t reg, uint8_t *data, uint16_t len)
         float gy = (float)(g_sensors.pitch_rate_rads / 0.00106522);
         float gz = (float)(g_sensors.yaw_rate_rads   / 0.00106522);
 
-        int16_t raw_ax = (int16_t)ax;
-        int16_t raw_ay = (int16_t)ay;
-        int16_t raw_az = (int16_t)az;
-        int16_t raw_t  = 0;
-        int16_t raw_gx = (int16_t)gx;
-        int16_t raw_gy = (int16_t)gy;
-        int16_t raw_gz = (int16_t)gz;
+        int16_t rax=(int16_t)ax, ray=(int16_t)ay, raz=(int16_t)az;
+        int16_t rgx=(int16_t)gx, rgy=(int16_t)gy, rgz=(int16_t)gz;
 
-        data[0]  = (raw_ax >> 8) & 0xFF; data[1]  = raw_ax & 0xFF;
-        data[2]  = (raw_ay >> 8) & 0xFF; data[3]  = raw_ay & 0xFF;
-        data[4]  = (raw_az >> 8) & 0xFF; data[5]  = raw_az & 0xFF;
-        data[6]  = (raw_t  >> 8) & 0xFF; data[7]  = raw_t  & 0xFF;
-        data[8]  = (raw_gx >> 8) & 0xFF; data[9]  = raw_gx & 0xFF;
-        data[10] = (raw_gy >> 8) & 0xFF; data[11] = raw_gy & 0xFF;
-        data[12] = (raw_gz >> 8) & 0xFF; data[13] = raw_gz & 0xFF;
+        data[0]=(rax>>8)&0xFF; data[1]=rax&0xFF;
+        data[2]=(ray>>8)&0xFF; data[3]=ray&0xFF;
+        data[4]=(raz>>8)&0xFF; data[5]=raz&0xFF;
+        data[6]=0;             data[7]=0;
+        data[8]=(rgx>>8)&0xFF; data[9]=rgx&0xFF;
+        data[10]=(rgy>>8)&0xFF;data[11]=rgy&0xFF;
+        data[12]=(rgz>>8)&0xFF;data[13]=rgz&0xFF;
         return true;
     }
-
     memset(data, 0, len);
     return true;
 }
 
-/* ── UART mock – GPS NMEA cümlesi üretir ─────────────────── */
+/* ── UART mock: GPS NMEA ─────────────────────────────────── */
 static char g_gps_buf[256];
 static int  g_gps_buf_len = 0;
 static int  g_gps_buf_pos = 0;
@@ -137,42 +142,26 @@ static uint8_t nmea_cs(const char *s)
 
 static void refresh_gps_sentence(void)
 {
-    /* $GNGGA,HHMMSS.ss,DDMM.mmm,N/S,DDDMM.mmm,E/W,fix,sats,,alt,M,,M,,*cs */
-    double lat = g_sensors.lat_deg;
-    double lon = g_sensors.lon_deg;
-    char lat_h = lat >= 0 ? 'N' : 'S';
-    char lon_h = lon >= 0 ? 'E' : 'W';
+    double lat = g_sensors.lat_deg, lon = g_sensors.lon_deg;
+    char lath = lat >= 0 ? 'N' : 'S', lonh = lon >= 0 ? 'E' : 'W';
     if (lat < 0) lat = -lat;
     if (lon < 0) lon = -lon;
-
-    int lat_d = (int)lat;
-    double lat_m = (lat - lat_d) * 60.0;
-    int lon_d = (int)lon;
-    double lon_m = (lon - lon_d) * 60.0;
-
+    int latd = (int)lat, lond = (int)lon;
+    double latm = (lat-latd)*60.0, lonm = (lon-lond)*60.0;
     char body[200];
     snprintf(body, sizeof(body),
-             "GNGGA,120000.00,%02d%08.5f,%c,%03d%08.5f,%c,3,12,,.%.1f,M,,M,,",
-             lat_d, lat_m, lat_h,
-             lon_d, lon_m, lon_h,
-             (double)g_sensors.alt_m);
-
+             "GNGGA,120000.00,%02d%08.5f,%c,%03d%08.5f,%c,3,12,,%.1f,M,,M,,",
+             latd, latm, lath, lond, lonm, lonh, (double)g_sensors.alt_m);
     g_gps_buf_len = snprintf(g_gps_buf, sizeof(g_gps_buf),
                              "$%s*%02X\r\n", body, nmea_cs(body));
     g_gps_buf_pos = 0;
 }
 
-bool hw_uart_write(const uint8_t *data, uint16_t len)
-{
-    (void)data; (void)len;
-    return true;
-}
+bool     hw_uart_write(const uint8_t *d, uint16_t l) { (void)d;(void)l; return true; }
 
 uint16_t hw_uart_read(uint8_t *buf, uint16_t max_len)
 {
-    if (g_gps_buf_pos >= g_gps_buf_len) {
-        refresh_gps_sentence();
-    }
+    if (g_gps_buf_pos >= g_gps_buf_len) refresh_gps_sentence();
     uint16_t avail = (uint16_t)(g_gps_buf_len - g_gps_buf_pos);
     uint16_t n = avail < max_len ? avail : max_len;
     memcpy(buf, g_gps_buf + g_gps_buf_pos, n);
@@ -180,25 +169,21 @@ uint16_t hw_uart_read(uint8_t *buf, uint16_t max_len)
     return n;
 }
 
-/* ── PWM mock – kontrol paketini JSBSim'e gönderir ──────── */
+/* ── PWM mock ────────────────────────────────────────────── */
 void hw_pwm_set_pulse_us(uint8_t channel, uint16_t pulse_us)
 {
-    float norm = (pulse_us - 1500.0f) / 500.0f;  /* -1…+1 */
-    float thr  = (pulse_us - 1000.0f) / 1000.0f; /* 0…1   */
-
+    float norm = (pulse_us - 1500.0f) / 500.0f;
+    float thr  = (pulse_us - 1000.0f) / 1000.0f;
     switch (channel) {
         case 0: g_controls.aileron  =  norm; break;
-        case 1: g_controls.aileron  = -norm; break;  /* ters aileron */
+        case 1: g_controls.aileron  = -norm; break;
         case 2: g_controls.elevator =  norm; break;
         case 3: g_controls.rudder   =  norm; break;
         case 4: g_controls.throttle =  thr;  break;
     }
-
-    /* Her throttle yazımında paketi gönder (400 Hz) */
-    if (channel == 4 && g_send_sock >= 0) {
+    if (channel == 4 && g_send_sock >= 0)
         sendto(g_send_sock, &g_controls, sizeof(g_controls), 0,
                (struct sockaddr *)&g_jsbsim_addr, sizeof(g_jsbsim_addr));
-    }
 }
 
 /* ── Log ─────────────────────────────────────────────────── */
@@ -211,33 +196,42 @@ void hw_log(const char *fmt, ...)
     fflush(stdout);
 }
 
-/* ── Simülasyon başlatma (sim_main.c'den çağrılır) ──────── */
+/* ── mock_hal_init ───────────────────────────────────────── */
 void mock_hal_init(void)
 {
-    /* Alıcı soket */
+    /* Sensör alma soketi (5500) */
     g_recv_sock = socket(AF_INET, SOCK_DGRAM, 0);
-    struct sockaddr_in bind_addr = {0};
-    bind_addr.sin_family      = AF_INET;
-    bind_addr.sin_addr.s_addr = INADDR_ANY;
-    bind_addr.sin_port        = htons(SIM_RECV_PORT);
-    bind(g_recv_sock, (struct sockaddr *)&bind_addr, sizeof(bind_addr));
+    struct sockaddr_in a = {0};
+    a.sin_family = AF_INET; a.sin_addr.s_addr = INADDR_ANY;
+    a.sin_port = htons(SIM_RECV_PORT);
+    bind(g_recv_sock, (struct sockaddr *)&a, sizeof(a));
 
-    /* Gönderici soket */
+    /* Kontrol gönderme soketi (5501) */
     g_send_sock = socket(AF_INET, SOCK_DGRAM, 0);
     g_jsbsim_addr.sin_family      = AF_INET;
     g_jsbsim_addr.sin_addr.s_addr = inet_addr(SIM_HOST);
     g_jsbsim_addr.sin_port        = htons(SIM_SEND_PORT);
 
-    /* İlk sensör paketini sıfırla (yerçekimi -g Z ekseni) */
+    /* RC alma soketi (5503) – non-blocking */
+    g_rc_sock = socket(AF_INET, SOCK_DGRAM, 0);
+    a.sin_port = htons(RC_UDP_PORT);
+    bind(g_rc_sock, (struct sockaddr *)&a, sizeof(a));
+    fcntl(g_rc_sock, F_SETFL, fcntl(g_rc_sock, F_GETFL, 0) | O_NONBLOCK);
+
+    /* RC varsayılanları: tüm kanallar orta, throttle min */
+    for (int i = 0; i < IBUS_MAX_CHANNELS; i++) g_rc_channels[i] = 1500;
+    g_rc_channels[RC_CH_THROTTLE] = 1000;
+
+    /* Sensör sıfırla */
     memset(&g_sensors, 0, sizeof(g_sensors));
-    g_sensors.az_ms2 = -9.80665;
+    g_sensors.az_ms2  = -9.80665;
     g_sensors.lat_deg = 41.0;
     g_sensors.lon_deg = 29.0;
     g_sensors.alt_m   = 100.0;
-
     refresh_gps_sentence();
-    printf("[SIM] Mock HAL başlatıldı. UDP %s:%d ← sensör, → kontrol :%d\n",
-           SIM_HOST, SIM_RECV_PORT, SIM_SEND_PORT);
+
+    printf("[SIM] Portlar → Sensör:%d  Kontrol:%d  RC-in:%d  Telemetri:5502\n",
+           SIM_RECV_PORT, SIM_SEND_PORT, RC_UDP_PORT);
 }
 
 #endif /* SIMULATION */

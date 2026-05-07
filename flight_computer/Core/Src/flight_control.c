@@ -24,7 +24,11 @@ void fc_arm(FlightController *fc)
 {
     if (fc->armed) return;
     servo_arm_esc();
-    hw_delay_ms(2000);
+#ifdef SIMULATION
+    hw_delay_ms(150);   /* Simülasyonda kısa tut */
+#else
+    hw_delay_ms(2000);  /* Gerçek ESC arming protokolü */
+#endif
     fc->armed = true;
     fc->mode  = MODE_MANUAL;
     hw_log("FC: ARMED – mod MANUAL\n");
