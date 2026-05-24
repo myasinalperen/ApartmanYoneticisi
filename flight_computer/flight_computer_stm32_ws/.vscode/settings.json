@@ -1,0 +1,13 @@
+{
+    "cmake.configureOnOpen": false,
+    "cmake.buildDirectory": "${workspaceFolder}/build",
+    "cmake.generator": "Ninja",
+    "cmake.toolchainFile": "${workspaceFolder}/cmake/stm32f407.cmake",
+    "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
+    "editor.formatOnSave": true,
+    "files.associations": {
+        "*.h": "c",
+        "*.ld": "linkerscript"
+    },
+    "cortex-debug.openocdPath": "openocd"
+}

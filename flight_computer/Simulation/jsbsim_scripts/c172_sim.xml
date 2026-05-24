@@ -1,0 +1,59 @@
+<?xml version="1.0"?>
+<!--
+  JSBSim Run Script – Cessna 172 (fixed-wing IHA benzetimi)
+
+  Kullanım:
+    JSBSim --script=jsbsim_scripts/c172_sim.xml
+
+  JSBSim kurulumu (Ubuntu/Debian):
+    pip install jsbsim
+  veya:
+    sudo apt install jsbsim
+
+  Uçuş bilgisayarını ayrı terminalde başlat:
+    cd Simulation && make && ./sim_fc
+-->
+<runscript name="fixed_wing_uav_sim" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+  <use aircraft="c172p" initialize="reset_straight_level"/>
+
+  <run start="0" end="300" dt="0.002">   <!-- 500 Hz fizik adımı -->
+
+    <!-- ── UDP çıkış: sensör verisi → uçuş bilgisayarı (port 5500) ── -->
+    <output name="localhost" type="SOCKET" protocol="UDP" port="5500" rate="500">
+      <rates>
+        <property> velocities/p-rad_sec  </property>   <!-- roll rate  -->
+        <property> velocities/q-rad_sec  </property>   <!-- pitch rate -->
+        <property> velocities/r-rad_sec  </property>   <!-- yaw rate   -->
+      </rates>
+      <velocities>
+        <property> accelerations/udot-ft_sec2 </property>
+        <property> accelerations/vdot-ft_sec2 </property>
+        <property> accelerations/wdot-ft_sec2 </property>
+      </velocities>
+      <positions>
+        <property> position/lat-geod-deg </property>
+        <property> position/long-gc-deg  </property>
+        <property> position/h-sl-ft      </property>
+      </positions>
+      <attitudes>
+        <property> attitude/roll-rad  </property>
+        <property> attitude/pitch-rad </property>
+        <property> attitude/psi-rad   </property>
+      </attitudes>
+      <velocities>
+        <property> velocities/vt-fps </property>   <!-- hava hızı ft/s -->
+      </velocities>
+    </output>
+
+    <!-- ── UDP giriş: kontrol → JSBSim (port 5501) ── -->
+    <input port="5501"/>
+
+    <!-- Başlangıç kondisyonu: 500 ft irtifada düz uçuş -->
+    <property value="500"> ic/h-agl-ft      </property>
+    <property value="80">  ic/vc-kts        </property>
+    <property value="0">   ic/psi-true-deg  </property>
+
+  </run>
+
+</runscript>

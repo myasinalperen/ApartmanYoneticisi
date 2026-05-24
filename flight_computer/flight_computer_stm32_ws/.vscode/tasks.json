@@ -1,0 +1,75 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "1. CMake Yapılandır",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "-S", "${workspaceFolder}",
+                "-B", "${workspaceFolder}/build",
+                "-DCMAKE_TOOLCHAIN_FILE=${workspaceFolder}/cmake/stm32f407.cmake",
+                "-DCMAKE_BUILD_TYPE=Release",
+                "-G", "Ninja"
+            ],
+            "group": "build",
+            "presentation": { "reveal": "always", "panel": "shared" },
+            "problemMatcher": []
+        },
+        {
+            "label": "2. Derle (Build)",
+            "type": "shell",
+            "command": "cmake",
+            "args": ["--build", "${workspaceFolder}/build", "--parallel"],
+            "group": { "kind": "build", "isDefault": true },
+            "presentation": { "reveal": "always", "panel": "shared" },
+            "problemMatcher": {
+                "owner": "gcc-arm",
+                "fileLocation": "absolute",
+                "pattern": {
+                    "regexp": "^(.*):(\\d+):(\\d+):\\s+(warning|error):\\s+(.*)$",
+                    "file": 1, "line": 2, "column": 3,
+                    "severity": 4, "message": 5
+                }
+            },
+            "dependsOn": "1. CMake Yapılandır"
+        },
+        {
+            "label": "3. Karta Yükle (Flash)",
+            "type": "shell",
+            "command": "STM32_Programmer_CLI",
+            "args": [
+                "--connect", "port=SWD", "freq=4000",
+                "--write", "${workspaceFolder}/build/FlightComputer.hex",
+                "--verify",
+                "--reset"
+            ],
+            "group": "build",
+            "presentation": { "reveal": "always", "panel": "shared" },
+            "problemMatcher": [],
+            "dependsOn": "2. Derle (Build)"
+        },
+        {
+            "label": "3b. Karta Yükle (OpenOCD)",
+            "type": "shell",
+            "command": "openocd",
+            "args": [
+                "-f", "interface/stlink.cfg",
+                "-f", "target/stm32f4x.cfg",
+                "-c", "program ${workspaceFolder}/build/FlightComputer.bin verify reset exit 0x08000000"
+            ],
+            "group": "build",
+            "presentation": { "reveal": "always", "panel": "shared" },
+            "problemMatcher": []
+        },
+        {
+            "label": "Temizle (Clean)",
+            "type": "shell",
+            "command": "cmake",
+            "args": ["--build", "${workspaceFolder}/build", "--target", "clean"],
+            "group": "build",
+            "presentation": { "reveal": "always", "panel": "shared" },
+            "problemMatcher": []
+        }
+    ]
+}

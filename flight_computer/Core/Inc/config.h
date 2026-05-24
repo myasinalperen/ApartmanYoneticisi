@@ -1,0 +1,99 @@
+#ifndef CONFIG_H
+#define CONFIG_H
+
+/* ── Derleme hedefi ─────────────────────────────────────── */
+/* PC simülasyonu için: gcc -DSIMULATION ...                 */
+/* STM32 için bu flag tanımlı olmaz                          */
+
+/* ── IMU ─────────────────────────────────────────────────── */
+#define IMU_SAMPLE_RATE_HZ      1000u
+#define IMU_DT                  (1.0f / IMU_SAMPLE_RATE_HZ)
+#define MPU6050_I2C_ADDR        (0x68 << 1)   /* AD0=GND */
+#define MPU6050_GYRO_FS         250            /* ±250 °/s */
+#define MPU6050_ACCEL_FS        4              /* ±4 g     */
+
+/* ── GPS ─────────────────────────────────────────────────── */
+#define GPS_BAUDRATE            115200u
+#define GPS_UPDATE_RATE_HZ      10u
+
+/* ── Servo PWM (50 Hz, 1000–2000 µs) ────────────────────── */
+#define SERVO_PWM_FREQ_HZ       400u
+#define SERVO_PULSE_MIN_US      1000u
+#define SERVO_PULSE_MID_US      1500u
+#define SERVO_PULSE_MAX_US      2000u
+
+/* ── ESC (Brushless) ─────────────────────────────────────── */
+#define ESC_PWM_FREQ_HZ         400u
+#define ESC_PULSE_MIN_US        1000u
+#define ESC_PULSE_MAX_US        2000u
+#define ESC_ARMING_PULSE_US     1000u
+
+/* ── Kontrol döngüsü ─────────────────────────────────────── */
+#define CTRL_LOOP_RATE_HZ       400u
+#define CTRL_DT                 (1.0f / CTRL_LOOP_RATE_HZ)
+
+/* ── PID – Roll (aileron) ────────────────────────────────── */
+#define ROLL_RATE_KP            0.15f
+#define ROLL_RATE_KI            0.05f
+#define ROLL_RATE_KD            0.004f
+#define ROLL_RATE_IMAX          0.3f
+
+#define ROLL_ANGLE_KP           5.0f
+#define ROLL_ANGLE_MAX_DEG      45.0f
+
+/* ── PID – Pitch (elevator) ──────────────────────────────── */
+#define PITCH_RATE_KP           0.18f
+#define PITCH_RATE_KI           0.06f
+#define PITCH_RATE_KD            0.005f
+#define PITCH_RATE_IMAX         0.3f
+
+#define PITCH_ANGLE_KP          5.0f
+#define PITCH_ANGLE_MAX_DEG     30.0f
+
+/* ── PID – Yaw (rudder) ──────────────────────────────────── */
+#define YAW_RATE_KP             0.20f
+#define YAW_RATE_KI             0.04f
+#define YAW_RATE_KD             0.003f
+#define YAW_RATE_IMAX           0.4f
+
+/* ── Madgwick filtresi ───────────────────────────────────── */
+#ifdef SIMULATION
+#define MADGWICK_BETA           2.0f   /* Simülasyonda hızlı yakınsama */
+#else
+#define MADGWICK_BETA           0.1f
+#endif
+
+/* ── RC Alıcı (FlySky iBUS) ──────────────────────────────── */
+/* iBUS: 115200 baud, 8N1, NORMAL lojik – inverter GEREKMİYOR */
+/* Alıcı iBUS pini → STM32 PA10 (USART1_RX)  doğrudan bağla  */
+#define RC_CHANNELS             14
+#define IBUS_BAUDRATE           115200u
+
+/* RC kanal atamaları (Mode 2 kumanda) */
+#define RC_CH_AILERON           0    /* sağ stick yatay */
+#define RC_CH_ELEVATOR          1    /* sağ stick dikey */
+#define RC_CH_THROTTLE          2    /* sol stick dikey */
+#define RC_CH_RUDDER            3    /* sol stick yatay */
+#define RC_CH_MODE              4    /* mod anahtarı: <-0.5=MANUAL, >0.5=STABILIZE */
+#define RC_CH_ARM               5    /* arm anahtarı: >0.5=ARM */
+
+/* Yarı otopilot sınırları */
+#define STAB_MAX_ROLL_DEG       45.0f
+#define STAB_MAX_PITCH_DEG      25.0f
+#define STAB_MAX_YAW_RATE_DPS   60.0f
+#define FAILSAFE_THROTTLE       0.35f  /* RC kesilince güvenli rölanti */
+#define FAILSAFE_PITCH_DEG      3.0f   /* hafif kalkış pitchi */
+
+/* ── FreeRTOS görev öncelikleri ──────────────────────────── */
+#define TASK_PRIO_IMU           5
+#define TASK_PRIO_CONTROL       4
+#define TASK_PRIO_GPS           3
+#define TASK_PRIO_RC            4      /* kontrol ile aynı öncelik */
+#define TASK_PRIO_TELEMETRY     1
+
+/* ── Simülasyon UDP portları ─────────────────────────────── */
+#define SIM_RECV_PORT           5500    /* JSBSim → biz */
+#define SIM_SEND_PORT           5501    /* biz → JSBSim */
+#define SIM_HOST                "127.0.0.1"
+
+#endif /* CONFIG_H */
